@@ -81,7 +81,7 @@ pipeline {
                 node('container-agent') {
                     sh 'docker logout || true'
                 }
-                node('instance-agent') {
+                node('ec2-agent') {
                     sh 'docker logout || true'
                 }
             }
