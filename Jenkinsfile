@@ -45,7 +45,7 @@ pipeline {
                 }
 
                 stage('Deploy on Instance Agent') {
-                    agent { label 'instance-agent' }
+                    agent { label 'ec2-agent' }
                     steps {
                         script {
                             withCredentials([usernamePassword(
