@@ -2,45 +2,87 @@ pipeline {
     agent none
 
     environment {
-        DOCKER_HUB = 'bassemosama12'
-        IMAGE_NAME = 'java-app'
-        GIT_REPO = 'https://github.com/bassemosama/java-app.git'
+        DOCKER_IMAGE = 'bassemosama12/java-app'
     }
 
     stages {
-        stage('Build on Container Agent') {
-            agent { label 'container-agent' }
-
+        stage('Checkout') {
+            agent any
             steps {
-                git url: "${env.GIT_REPO}", credentialsId: 'github'
-
-                script {
-                    // Build Docker image
-                    sh "docker build -t ${DOCKER_HUB}/${IMAGE_NAME}:latest ."
-                    
-                    // Login to Docker Hub
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-                    }
-
-                    // Push Docker image
-                    sh "docker push ${DOCKER_HUB}/${IMAGE_NAME}:latest"
-                }
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/jenkins-task']],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/bassemosama/java-app.git',
+                        credentialsId: 'github'
+                    ]]
+                ])
             }
         }
 
-        stage('Deploy on Instance Agent') {
-            agent { label 'instance-agent' }
+        stage('Build & Deploy in Parallel') {
+            parallel {
+                stage('Build & Push on Container Agent') {
+                    agent { label 'container-agent' }
+                    steps {
+                        script {
+                            withCredentials([usernamePassword(
+                                credentialsId: 'dockerhub',
+                                usernameVariable: 'DOCKER_USER',
+                                passwordVariable: 'DOCKER_PASS'
+                            )]) {
+                                sh 'docker login -u $DOCKER_USER -p $DOCKER_PASS'
+                            }
 
-            steps {
-                git url: "${env.GIT_REPO}", credentialsId: 'github'
+                            sh "docker build -t ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER} ."
+                            sh "docker push ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER}"
 
-                script {
-                    // Pull image from Docker Hub
-                    sh "docker pull ${DOCKER_HUB}/${IMAGE_NAME}:latest"
+                            echo "✅ Built and pushed: ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER}"
+                        }
+                    }
+                }
 
-                    // Run container
-                    sh "docker run --rm ${DOCKER_HUB}/${IMAGE_NAME}:latest"
+                stage('Deploy on Instance Agent') {
+                    agent { label 'instance-agent' }
+                    steps {
+                        script {
+                            withCredentials([usernamePassword(
+                                credentialsId: 'dockerhub',
+                                usernameVariable: 'DOCKER_USER',
+                                passwordVariable: 'DOCKER_PASS'
+                            )]) {
+                                sh 'docker login -u $DOCKER_USER -p $DOCKER_PASS'
+                            }
+
+                            sh "docker pull ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER}"
+                            sh 'docker stop java-app-running || true'
+                            sh 'docker rm java-app-running || true'
+
+                            sh """
+                                docker run -d \
+                                  --name java-app-running \
+                                  -p 8080:8080 \
+                                  ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER}
+                            """
+
+                            echo "✅ Deployed on instance agent using image: ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                node('container-agent') {
+                    sh 'docker logout || true'
+                }
+                node('instance-agent') {
+                    sh 'docker logout || true'
                 }
             }
         }

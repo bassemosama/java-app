@@ -1,5 +1,12 @@
+# Dockerfile
+FROM maven:3.8.6-openjdk-17 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn package -DskipTests
+
 FROM openjdk:17-jdk-slim
 WORKDIR /app
-COPY . /app
-RUN ./mvnw package
-CMD ["java", "-cp", "target/myapp-1.0-SNAPSHOT.jar", "App"]
+COPY --from=build /app/target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
